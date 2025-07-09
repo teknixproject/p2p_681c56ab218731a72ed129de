@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
+import dayjs from 'dayjs';
 /** @jsxImportSource @emotion/react */
 import _ from 'lodash';
 import { FC, memo, useMemo } from 'react';
@@ -9,10 +10,9 @@ import { useActions } from '@/hooks/useActions';
 import { useHandleData } from '@/hooks/useHandleData';
 import { useHandleProps } from '@/hooks/useHandleProps';
 import { stateManagementStore } from '@/stores';
-import { TTriggerActions } from '@/types';
 import { GridItem } from '@/types/gridItem';
 import { getComponentType } from '@/uitls/component';
-import { convertToEmotionStyle } from '@/uitls/styleInline';
+import { convertCssObjectToCamelCase, convertToEmotionStyle } from '@/uitls/styleInline';
 import { css } from '@emotion/react';
 
 import { componentRegistry, convertProps } from './ListComponent';
@@ -27,14 +27,14 @@ type TProps = {
 // Custom hook to extract common logic
 const useRenderItem = (data: GridItem, valueStream?: any) => {
   console.log('🚀 ~ useRenderItem ~ valueStream:', valueStream);
-  const { isForm, isNoChildren, isChart, isFeebBack } = getComponentType(data?.value || '');
+  const { isForm, isNoChildren, isChart, isDatePicker } = getComponentType(data?.value || '');
   const { findVariable } = stateManagementStore();
   const { getData, dataState } = useHandleData({ dataProp: data?.data });
   const actionsProp = useMemo(
     () => data?.componentProps?.dataProps || [],
     [data?.componentProps?.dataProps]
   );
-  const { multiples } = useHandleProps({ actionsProp });
+  const { multiples } = useHandleProps({ actionsProp, valueStream });
   const { handleAction, isLoading } = useActions(data);
 
   const valueType = useMemo(() => data?.value?.toLowerCase() || '', [data?.value]);
@@ -45,31 +45,48 @@ const useRenderItem = (data: GridItem, valueStream?: any) => {
   );
 
   const propsCpn = useMemo(() => {
+    console.log('123', { dataState, getValue: getData(data.data, valueStream), valueStream });
+
     const staticProps = {
-      ...convertProps({ data, getData, dataState, valueStream }),
+      ...convertProps({ data }),
       onClick: () => handleAction('onClick'),
       onChange: () => handleAction('onChange'),
     };
 
-    const cssMultiple = css`
-      ${convertToEmotionStyle(staticProps?.styleMultiple)}
-    `;
+    const advancedCss = convertToEmotionStyle(staticProps?.styleMultiple);
+
+    // Fix 1: Check if advancedCss is a string (CSS string) or object (CSS object)
+    let cssMultiple;
+
+    if (typeof advancedCss === 'string') {
+      // If it's a CSS string, use template literal directly
+      cssMultiple = css`
+        ${advancedCss}
+      `;
+    } else if (advancedCss && typeof advancedCss === 'object') {
+      // If it's a CSS object, convert kebab-case to camelCase and use as object
+      const convertedCssObj = convertCssObjectToCamelCase(advancedCss);
+      cssMultiple = css(convertedCssObj);
+    } else {
+      // Fallback to empty css
+      cssMultiple = css``;
+    }
+
     staticProps.css = cssMultiple;
-    const dynamicProps = Object.entries(data?.componentProps?.actions || {}).reduce(
-      (acc, [eventName, actionObj]) => {
-        acc[eventName] = () => handleAction('onClick', actionObj as TTriggerActions);
-        return acc;
-      },
-      {} as Record<string, any>
-    );
+
     const result = {
       ...staticProps,
-      ...dynamicProps,
       ...multiples,
     };
+    if (isDatePicker) {
+      if (typeof result.value === 'string') result.value = dayjs(result.value);
+      if (typeof result.defaultValue === 'string') result.defaultValue = dayjs(result.defaultValue);
+    }
     if (isNoChildren && 'children' in result) {
       delete result.children;
     }
+    if ('styleMultiple' in result) delete result.styleMultiple;
+    if ('dataProps' in result) delete result.dataProps;
     console.log(`🚀 ~ propsCpn ~ ${data.id}:`, result);
 
     return result;
@@ -124,9 +141,11 @@ const RenderForm: FC<TProps> = (props) => {
   });
   const { handleSubmit } = methods;
   const { handleAction } = useActions();
-  const formKeys = data?.componentProps?.formKeys;
+  const formKeys = useMemo(() => data?.componentProps?.formKeys, [data?.componentProps?.formKeys]);
 
   const onSubmit = (formData: any) => {
+    console.log('🚀 ~ onSubmit ~ formData:', formData);
+
     handleAction('onSubmit', data?.actions, formData);
   };
   if (!valueType) return <div></div>;
@@ -149,22 +168,11 @@ const RenderForm: FC<TProps> = (props) => {
 
 const RenderFormItem: FC<TProps> = (props) => {
   const { data, formKeys, valueStream } = props;
-
+  const { isLoading, valueType, Component, propsCpn, dataState } = useRenderItem(data, valueStream);
   const { findVariable } = stateManagementStore();
-  const { getData, dataState } = useHandleData({ dataProp: data?.data });
+  // const { getData, dataState } = useHandleData({ dataProp: data?.data });
   const { control } = useFormContext();
   const { isInput } = getComponentType(data?.value || '');
-
-  const valueType = useMemo(() => data?.value?.toLowerCase() || '', [data?.value]);
-  const Component = useMemo(
-    () => (valueType ? _.get(componentRegistry, valueType) || 'div' : 'div'),
-    [valueType]
-  );
-
-  const propsCpn = useMemo(() => {
-    const result = convertProps({ data, getData, dataState, valueStream });
-    return result;
-  }, [data, dataState, valueStream, getData]);
 
   if (!valueType) return <div></div>;
 
