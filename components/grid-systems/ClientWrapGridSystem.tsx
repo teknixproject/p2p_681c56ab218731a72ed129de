@@ -27,7 +27,7 @@ export const RenderUIClient: FC = () => {
   return (
     <div className="relative">
       {!_.isEmpty(selectedBodyLayout) && (
-        <GridSystemContainer page={selectedBodyLayout || {}} deviceType={deviceType} isBody />
+        <GridSystemContainer page={selectedBodyLayout} deviceType={deviceType} isBody />
       )}
     </div>
   );
@@ -54,7 +54,7 @@ export const PreviewUI: FC = () => {
   return (
     <div className="component-preview-container">
       {isPage && !customWidgetName ? (
-        <div className="relative flex flex-col justify-between min-h-screen">
+        <div className="relative flex flex-col min-h-screen">
           {!_.isEmpty(selectedHeaderLayout) && (
             <GridSystemContainer
               page={selectedHeaderLayout || {}}
