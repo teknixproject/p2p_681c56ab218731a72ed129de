@@ -21,7 +21,6 @@ const createSafeDynamicImport = (importFn: () => Promise<any>, componentName: st
       loading: () => null, // No loading state for failed imports
     }
   );
-  MenuApple: dynamic(() => import("./MenuApple")),
 };
 
 export const components = {
