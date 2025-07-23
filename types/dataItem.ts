@@ -1,4 +1,4 @@
-import { TAction, TConditionChildMap } from './actions';
+import { TAction, TConditionChildMap, TTriggerActions } from './actions';
 import { TTypeVariable } from './variable';
 
 export type TOptionApiResponse =
@@ -35,6 +35,7 @@ export type TData = {
     paramName: string;
   };
   itemInList: { jsonPath?: string };
+  formData: { jsonPath?: string };
   combineText?: TCombineText;
   dynamicGenerate?: TDataField;
   apiResponse?: TDataField;
@@ -50,5 +51,6 @@ export type TData = {
   };
   valueInput?: string;
   defaultValue?: string;
+  condition?: TTriggerActions;
   temp: any;
 };

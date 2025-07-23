@@ -1,6 +1,7 @@
-import React, { useCallback, useMemo } from 'react';
 import { Menu } from 'antd';
-import { useRouter, usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import React, { useCallback, useMemo } from 'react';
+
 import { Icon } from '@iconify/react/dist/iconify.js';
 
 interface NavigationMenuProps {
@@ -27,7 +28,6 @@ const convertIconStringToComponent = (iconString: string) => {
     }
     return <Icon icon={iconString} />;
 };
-
 const ConfigMenu: React.FC<NavigationMenuProps> = ({
     items,
     mode = 'horizontal',
@@ -44,16 +44,18 @@ const ConfigMenu: React.FC<NavigationMenuProps> = ({
     onSelect,
     onDeselect,
     onOpenChange,
+    ...props
 }) => {
     const router = useRouter();
     const pathname = usePathname();
 
-    // Process menu items với icon conversion
+    // Process menu items với icon conversion và clean up invalid props
     const processMenuItems = useCallback((menuItems: any[]): any[] => {
         if (!Array.isArray(menuItems)) return menuItems;
 
         return menuItems.map((item) => {
             const processedItem = { ...item };
+            processedItem.onClick = handleMenuClick;
 
             // Chuyển đổi icon string thành Icon component
             if (processedItem.icon && typeof processedItem.icon === 'string') {
@@ -70,67 +72,119 @@ const ConfigMenu: React.FC<NavigationMenuProps> = ({
                 processedItem.key = processedItem.label.toLowerCase().replace(/\s+/g, '-');
             }
 
+            // Clean up invalid DOM attributes - Mở rộng danh sách
+            const invalidDomAttributes = [
+                'collapsible',
+                'collapsed',
+                'expandable',
+                'expanded',
+                'selectable',
+                'checkable',
+                'checked',
+                'loading',
+                'ghost',
+                'block',
+                'danger',
+                'size',
+                'shape',
+                'htmlType',
+                'minWidth',
+                'maxWidth',
+                'resizable',
+                'sortable',
+                'filterable',
+                'width',
+                'height',
+                'flex',
+                'flexDirection',
+                'justifyContent',
+                'alignItems',
+            ];
+
+            invalidDomAttributes.forEach((attr) => {
+                if (processedItem.hasOwnProperty(attr)) {
+                    delete processedItem[attr];
+                }
+            });
+
+            // Chuyển đổi boolean false thành undefined cho các thuộc tính boolean
+            if (processedItem.collapsible === false) {
+                processedItem.collapsible = undefined;
+            }
+            if (processedItem.selectable === false) {
+                processedItem.selectable = undefined;
+            }
+            if (processedItem.disabled === false) {
+                processedItem.disabled = undefined;
+            }
+
             return processedItem;
         });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // Tìm selectedKeys dựa trên pathname
-    const getSelectedKeysFromPathname = useCallback((menuItems: any[], currentPath: string): string[] => {
-        const selectedKeys: string[] = [];
+    const getSelectedKeysFromPathname = useCallback(
+        (menuItems: any[], currentPath: string): string[] => {
+            const selectedKeys: string[] = [];
 
-        const findMatchingKeys = (items: any[], path: string) => {
-            for (const item of items) {
-                // Kiểm tra nếu item.value khớp với pathname
-                if (item.value === path) {
-                    selectedKeys.push(item.key);
-                    return true;
-                }
-
-                // Kiểm tra children nếu có
-                if (item.children && Array.isArray(item.children)) {
-                    if (findMatchingKeys(item.children, path)) {
+            const findMatchingKeys = (items: any[], path: string) => {
+                for (const item of items || []) {
+                    // Kiểm tra nếu item.value khớp với pathname
+                    if (item.value === path) {
                         selectedKeys.push(item.key);
                         return true;
                     }
-                }
-            }
-            return false;
-        };
 
-        findMatchingKeys(menuItems, currentPath);
-        return selectedKeys;
-    }, []);
+                    // Kiểm tra children nếu có
+                    if (item.children && Array.isArray(item.children)) {
+                        if (findMatchingKeys(item.children, path)) {
+                            selectedKeys.push(item.key);
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            };
+
+            findMatchingKeys(menuItems, currentPath);
+            return selectedKeys;
+        },
+        []
+    );
 
     // Handle menu click
-    const handleMenuClick = useCallback((menuInfo: any) => {
-        const { key } = menuInfo;
+    const handleMenuClick = useCallback(
+        (menuInfo: { key: string }) => {
 
-        // Tìm item trong menu data để lấy value/url
-        const findItemByKey = (items: any[], targetKey: string): any => {
-            for (const item of items) {
-                if (item.key === targetKey) {
-                    return item;
+            const key = menuInfo.key;
+
+            const findItemByKey = (items: any[], targetKey: string): any => {
+                for (const item of items) {
+                    if (item.key === targetKey) return item;
+                    if (item.children?.length) {
+                        const found = findItemByKey(item.children, targetKey);
+                        if (found) return found;
+                    }
                 }
-                if (item.children && Array.isArray(item.children)) {
-                    const found = findItemByKey(item.children, targetKey);
-                    if (found) return found;
-                }
+                return null;
+            };
+
+            const menuItem = findItemByKey(items, key);
+            if (menuItem?.value) {
+                console.log('handleMenuClick if');
+
+                router.push(menuItem.value);
+            } else if (key) {
+                console.log('handleMenuClick else');
+                router.push(`/${key}`);
             }
-            return null;
-        };
-
-        const menuItem = findItemByKey(items, key);
-        if (menuItem?.value) {
-            router.push(menuItem.value);
-        } else if (key) {
-            // Fallback: sử dụng key làm path nếu không có value
-            router.push(`/${key}`);
-        }
-    }, [router, items]);
+        },
+        [router, items]
+    );
 
     // Processed items
     const processedItems = useMemo(() => processMenuItems(items), [items, processMenuItems]);
-
     // Selected keys dựa trên pathname
     const selectedKeys = useMemo(() => {
         const pathBasedKeys = getSelectedKeysFromPathname(items, pathname);
@@ -155,24 +209,27 @@ const ConfigMenu: React.FC<NavigationMenuProps> = ({
             },
             selectedKeys,
             defaultSelectedKeys,
-            onClick: handleMenuClick,
+            // onClick: handleMenuClick,
             // Tắt chế độ overflow menu nếu cần
             overflowedIndicator: mode === 'horizontal' ? null : undefined,
         };
 
-        // Chỉ thêm các props nếu chúng được định nghĩa
+        // Chỉ thêm các props nếu chúng được định nghĩa và không phải false
         if (defaultOpenKeys.length > 0) props.defaultOpenKeys = defaultOpenKeys;
-        if (multiple !== undefined) props.multiple = multiple;
-        if (selectable !== undefined) props.selectable = selectable;
-        if (inlineCollapsed !== undefined) props.inlineCollapsed = inlineCollapsed;
+        if (multiple !== undefined && multiple !== false) props.multiple = multiple;
+        if (selectable !== undefined && selectable !== false) props.selectable = selectable;
+        if (inlineCollapsed !== undefined && inlineCollapsed !== false)
+            props.inlineCollapsed = inlineCollapsed;
         if (inlineIndent !== undefined) props.inlineIndent = inlineIndent;
         if (triggerSubMenuAction !== undefined) props.triggerSubMenuAction = triggerSubMenuAction;
-        if (forceSubMenuRender !== undefined) props.forceSubMenuRender = forceSubMenuRender;
+        if (forceSubMenuRender !== undefined && forceSubMenuRender !== false)
+            props.forceSubMenuRender = forceSubMenuRender;
         if (onSelect) props.onSelect = onSelect;
         if (onDeselect) props.onDeselect = onDeselect;
         if (onOpenChange) props.onOpenChange = onOpenChange;
 
         return props;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
         processedItems,
         mode,
@@ -193,7 +250,7 @@ const ConfigMenu: React.FC<NavigationMenuProps> = ({
         onOpenChange,
     ]);
 
-    return <Menu {...menuProps} />
+    return <Menu {...props} {...menuProps} />;
 };
 
 export default ConfigMenu;

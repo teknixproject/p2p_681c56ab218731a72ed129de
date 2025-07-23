@@ -1,150 +1,219 @@
-/* eslint-disable react-hooks/exhaustive-deps */
 import _ from 'lodash';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 import {
   TAction,
   TActionApiCall,
   TActionNavigate,
   TActionUpdateState,
-  TConditional,
   TTriggerActions,
   TTriggerValue,
 } from '@/types';
 
 import { actionHookSliceStore } from './actionSliceStore';
+import { useActions } from './useActions';
 import { useApiCallAction } from './useApiCallAction';
-import { useConditionAction } from './useConditionAction';
-import { useHandleData } from './useHandleData';
 import { useNavigateAction } from './useNavigateAction';
 import { useUpdateStateAction } from './useUpdateStateAction';
 
-export type TUseActions = {
-  multiples: Record<string, React.MouseEventHandler<HTMLButtonElement>>;
-};
-type TProps = {
-  actionsProp: {
-    name: string;
-    type: any;
-    data: any;
-  }[];
+interface TDataProps {
+  name: string;
+  type: 'data' | 'MouseEventHandler';
+  data: TTriggerActions;
+}
+
+interface UseHandlePropsResult {
+  actions: Record<string, React.MouseEventHandler<HTMLButtonElement>>;
+  executeAction: (action: TAction) => Promise<void>;
+  executeTriggerActions: (actions: TTriggerActions, triggerType: TTriggerValue) => Promise<void>;
+  createActionHandler: (actionName: string) => (triggerType?: TTriggerValue) => Promise<void>;
+}
+
+interface UseHandlePropsProps {
+  dataProps: TDataProps[];
   valueStream?: any;
-};
-export const useHandleProps = ({ actionsProp, valueStream }: TProps): TUseActions => {
-  const actionsReal = useMemo(() => actionsProp, [actionsProp]);
-  const { getData } = useHandleData({});
-  const { setMultipleActions } = actionHookSliceStore();
-  const triggerNameRef = useRef<TTriggerValue>('onClick');
+  formData?: any;
+}
 
-  const actionsMap = useMemo(() => {
-    const map: Record<string, TTriggerActions> = {};
-    actionsReal?.forEach((item) => {
-      if (!_.isEmpty(item.data)) {
-        map[item.name] = item.data;
-      }
-    });
-    return map;
-  }, [actionsReal]);
+// Constants
+const ACTION_TYPES = {
+  NAVIGATE: 'navigate',
+  API_CALL: 'apiCall',
+  UPDATE_STATE: 'updateStateManagement',
+} as const;
 
-  useEffect(() => {
-    setMultipleActions({
-      actions: actionsMap[triggerNameRef.current] || {},
-      triggerName: triggerNameRef.current,
-    });
-  }, [actionsMap]);
+const FC_TYPES = {
+  ACTION: 'action',
+  CONDITIONAL: 'conditional',
+} as const;
 
-  const executeActionFCType = useCallback(async (action?: TAction): Promise<void> => {
-    if (!action?.fcType) return;
+const DEFAULT_TRIGGER: TTriggerValue = 'onClick';
 
-    switch (action.fcType) {
-      case 'action':
-        await executeAction(action as TAction<TActionApiCall>);
-        break;
-      case 'conditional':
-        await executeConditional(action as TAction<TConditional>);
-        break;
-      default:
-        console.warn(`Unknown fcType: ${action.fcType}`);
+const createActionsMap = (dataProps: TDataProps[]): Record<string, TTriggerActions> => {
+  const map: Record<string, TTriggerActions> = {};
+
+  dataProps?.forEach((item) => {
+    if (!_.isEmpty(item.data)) {
+      map[item.name] = item.data;
     }
-  }, []);
-
-  const { handleApiCallAction } = useApiCallAction({
-    executeActionFCType,
   });
 
-  const { executeConditional } = useConditionAction({
-    executeActionFCType,
-  });
+  return map;
+};
 
-  const { handleUpdateStateAction } = useUpdateStateAction({
-    executeActionFCType,
-  });
+export const findRootAction = (actionsToExecute: Record<string, TAction>): TAction | undefined => {
+  return Object.values(actionsToExecute).find((action) => !action.parentId);
+};
 
-  const { handleNavigateAction } = useNavigateAction({
-    executeActionFCType,
-  });
+const validateActionMap = (actionMap: TTriggerActions | undefined, actionName: string): boolean => {
+  if (!actionMap) {
+    console.warn(`No actions found for: ${actionName}`);
+    return false;
+  }
+  return true;
+};
 
-  const executeAction = useCallback(
-    async (action: TAction): Promise<void> => {
-      if (!action) return;
+const createActionExecutor = (actionHandlers: {
+  handleNavigateAction: (action: TAction<TActionNavigate>) => Promise<void>;
+  handleApiCallAction: (action: TAction<TActionApiCall>) => Promise<void>;
+  handleUpdateStateAction: (action: TAction<TActionUpdateState>) => Promise<void>;
+}) => {
+  return async (action: TAction): Promise<void> => {
+    if (!action) return;
 
-      try {
-        switch (action.type) {
-          case 'navigate':
-            return handleNavigateAction(action as TAction<TActionNavigate>);
-          case 'apiCall':
-            return handleApiCallAction(action as TAction<TActionApiCall>);
-          case 'updateStateManagement':
-            return handleUpdateStateAction(action as TAction<TActionUpdateState>);
-          default:
-            console.warn(`Unknown action type: ${action.type}`);
-        }
-      } catch (error) {
-        console.error(`Error executing action ${action.id}:`, error);
+    try {
+      switch (action.type) {
+        case ACTION_TYPES.NAVIGATE:
+          return actionHandlers.handleNavigateAction(action as TAction<TActionNavigate>);
+        case ACTION_TYPES.API_CALL:
+          return actionHandlers.handleApiCallAction(action as TAction<TActionApiCall>);
+        case ACTION_TYPES.UPDATE_STATE:
+          return actionHandlers.handleUpdateStateAction(action as TAction<TActionUpdateState>);
+        default:
+          console.warn(`Unknown action type: ${action.type}`);
       }
-    },
-    [handleApiCallAction, handleNavigateAction, handleUpdateStateAction]
-  );
+    } catch (error) {
+      console.error(`Error executing action ${action.id}:`, error);
+    }
+  };
+};
 
-  const executeTriggerActions = async (
-    actions: TTriggerActions,
-    triggerType: TTriggerValue
-  ): Promise<void> => {
+export const createTriggerActionsExecutor = (
+  setMultipleActions: (payload: { actions: TTriggerActions; triggerName: TTriggerValue }) => void,
+  executeActionFCType: (action?: TAction) => Promise<void>
+) => {
+  return async (actions: TTriggerActions, triggerType: TTriggerValue): Promise<void> => {
     const actionsToExecute = actions[triggerType];
+
     setMultipleActions({ actions, triggerName: triggerType });
+
     if (!actionsToExecute) return;
 
-    const rootAction = Object.values(actionsToExecute).find((action) => !action.parentId);
+    const rootAction = findRootAction(actionsToExecute);
     if (rootAction) {
       await executeActionFCType(rootAction);
     }
   };
-  const handleAction = useCallback(
-    (actionName: string) =>
-      async (triggerType: TTriggerValue = 'onClick'): Promise<void> => {
-        if (!actionsMap[actionName]) return;
-        triggerNameRef.current = triggerType;
-        await executeTriggerActions(actionsMap[actionName], triggerType);
-      },
+};
+
+export const createActionHandlerFactory = (
+  actionsMap: Record<string, TTriggerActions>,
+  executeTriggerActions: (actions: TTriggerActions, triggerType: TTriggerValue) => Promise<void>
+) => {
+  return (actionName: string) =>
+    async (triggerType: TTriggerValue = DEFAULT_TRIGGER): Promise<void> => {
+      const actionMap = actionsMap[actionName];
+      if (!validateActionMap(actionMap, actionName)) {
+        return;
+      }
+
+      await executeTriggerActions(actionMap, triggerType);
+    };
+};
+
+export const createMouseEventHandlers = (
+  dataProps: TDataProps[],
+  createActionHandler: (actionName: string) => (triggerType?: TTriggerValue) => Promise<void>
+): Record<string, React.MouseEventHandler<HTMLButtonElement>> => {
+  const validActions = dataProps?.filter((item) => !_.isEmpty(item.data?.onClick));
+  const result: Record<string, React.MouseEventHandler<HTMLButtonElement>> = {};
+
+  if (!_.isArray(validActions)) return {};
+
+  for (const item of validActions) {
+    result[item.name] = async (e) => {
+      e?.preventDefault?.();
+      const handler = createActionHandler(item.name);
+      await handler();
+    };
+  }
+
+  return result;
+};
+
+export const useHandleProps = ({ dataProps }: UseHandlePropsProps): UseHandlePropsResult => {
+  const triggerNameRef = useRef<TTriggerValue>(DEFAULT_TRIGGER);
+  const previousActionsMapRef = useRef<Record<string, TTriggerActions>>({});
+  const setMultipleActions = actionHookSliceStore((state) => state.setMultipleActions);
+
+  const actionsMap = useMemo(() => createActionsMap(dataProps), [dataProps]);
+
+  const { handleApiCallAction } = useApiCallAction();
+  const { executeActionFCType } = useActions();
+
+  // const { executeConditional } = useConditionAction();
+
+  const { handleUpdateStateAction } = useUpdateStateAction();
+
+  const { handleNavigateAction } = useNavigateAction();
+
+  const executeAction = useMemo(
+    () =>
+      createActionExecutor({
+        handleNavigateAction,
+        handleApiCallAction,
+        handleUpdateStateAction,
+      }),
+    [handleApiCallAction, handleNavigateAction, handleUpdateStateAction]
+  );
+
+  // const executeActionFCType = useMemo(() => createFCTypeExecutor(executeAction), [executeAction]);
+
+  const executeTriggerActions = useMemo(
+    () => createTriggerActionsExecutor(setMultipleActions, executeActionFCType),
+    [setMultipleActions, executeActionFCType]
+  );
+
+  const createActionHandler = useMemo(
+    () => createActionHandlerFactory(actionsMap, executeTriggerActions),
     [actionsMap, executeTriggerActions]
   );
 
-  const multiples = useMemo(() => {
-    const result: Record<string, any> = {};
+  const actions = useMemo(
+    () => createMouseEventHandlers(dataProps, createActionHandler),
+    [dataProps, createActionHandler]
+  );
 
-    actionsReal?.forEach((item) => {
-      if (!_.isEmpty(item.data)) {
-        if (item.type.includes('MouseEventHandler'))
-          result[item.name] = async (e: any) => {
-            e?.preventDefault?.();
-            await handleAction(item.name)();
-          };
-        else result[item.name] = getData(item.data, valueStream);
-      }
-    });
+  useEffect(() => {
+    const currentActionsMap = actionsMap[triggerNameRef.current];
+    const previousActionsMap = previousActionsMapRef.current[triggerNameRef.current];
 
-    return result;
-  }, [handleAction, actionsReal]);
+    if (currentActionsMap && !_.isEqual(currentActionsMap, previousActionsMap)) {
+      setMultipleActions({
+        actions: currentActionsMap,
+        triggerName: triggerNameRef.current,
+      });
 
-  return { multiples };
+      previousActionsMapRef.current[triggerNameRef.current] = currentActionsMap;
+    }
+  }, [actionsMap, setMultipleActions]);
+
+  return {
+    actions,
+    executeAction,
+    executeTriggerActions,
+    createActionHandler,
+  };
 };
+
+export { ACTION_TYPES, DEFAULT_TRIGGER, FC_TYPES };

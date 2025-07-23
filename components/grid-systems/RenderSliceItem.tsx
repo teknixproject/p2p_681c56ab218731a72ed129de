@@ -2,39 +2,65 @@
 import dayjs from 'dayjs';
 /** @jsxImportSource @emotion/react */
 import _ from 'lodash';
-import { FC, memo, useMemo } from 'react';
-import isEqual from 'react-fast-compare';
+import { FC, useMemo } from 'react';
 import { Controller, FormProvider, useForm, useFormContext } from 'react-hook-form';
 
+import { actionHookSliceStore } from '@/hooks/actionSliceStore';
 import { useActions } from '@/hooks/useActions';
 import { useHandleData } from '@/hooks/useHandleData';
 import { useHandleProps } from '@/hooks/useHandleProps';
 import { stateManagementStore } from '@/stores';
 import { GridItem } from '@/types/gridItem';
 import { getComponentType } from '@/uitls/component';
+import { cleanProps } from '@/uitls/renderItem';
 import { convertCssObjectToCamelCase, convertToEmotionStyle } from '@/uitls/styleInline';
+import { convertToPlainProps } from '@/uitls/transfromProp';
 import { css } from '@emotion/react';
 
 import { componentRegistry, convertProps } from './ListComponent';
-import LoadingPage from './loadingPage';
 
 type TProps = {
   data: GridItem;
   valueStream?: any;
   formKeys?: { key: string; value: string }[];
 };
+const getPropData = (data: GridItem) =>
+  data?.componentProps?.dataProps?.filter((item: any) => item.type === 'data');
 
+const getPropActions = (data: GridItem) =>
+  data?.componentProps?.dataProps?.filter((item: any) => item.type.includes('MouseEventHandler'));
+const handleCssWithEmotion = (staticProps: Record<string, any>) => {
+  const advancedCss = convertToEmotionStyle(staticProps?.styleMultiple);
+  let cssMultiple;
+
+  if (typeof advancedCss === 'string') {
+    // If it's a CSS string, use template literal directly
+    cssMultiple = css`
+      ${advancedCss}
+    `;
+  } else if (advancedCss && typeof advancedCss === 'object') {
+    // If it's a CSS object, convert kebab-case to camelCase and use as object
+    const convertedCssObj = convertCssObjectToCamelCase(advancedCss);
+    cssMultiple = css(convertedCssObj);
+  } else {
+    // Fallback to empty css
+    cssMultiple = css``;
+  }
+
+  return cssMultiple;
+};
 // Custom hook to extract common logic
 const useRenderItem = (data: GridItem, valueStream?: any) => {
   const { isForm, isNoChildren, isChart, isDatePicker } = getComponentType(data?.value || '');
   const { findVariable } = stateManagementStore();
-  const { getData, dataState } = useHandleData({ dataProp: data?.data });
-  const actionsProp = useMemo(
-    () => data?.componentProps?.dataProps || [],
-    [data?.componentProps?.dataProps]
-  );
-  const { multiples } = useHandleProps({ actionsProp, valueStream });
-  const { handleAction, isLoading } = useActions(data);
+  const { dataState, getData } = useHandleData({
+    dataProp: getPropData(data),
+    valueStream,
+  });
+
+  const { actions } = useHandleProps({ dataProps: getPropActions(data) });
+
+  const { isLoading } = useActions(data);
 
   const valueType = useMemo(() => data?.value?.toLowerCase() || '', [data?.value]);
 
@@ -46,58 +72,40 @@ const useRenderItem = (data: GridItem, valueStream?: any) => {
   const propsCpn = useMemo(() => {
     const staticProps = {
       ...convertProps({ data }),
-      // onClick: () => handleAction('onClick'),
-      onChange: () => handleAction('onChange'),
     };
 
-    const advancedCss = convertToEmotionStyle(staticProps?.styleMultiple);
+    staticProps.css = handleCssWithEmotion(staticProps);
 
-    // Fix 1: Check if advancedCss is a string (CSS string) or object (CSS object)
-    let cssMultiple;
+    const result =
+      valueType === 'menu'
+        ? { ...staticProps, ...actions }
+        : {
+          ...staticProps,
+          ...dataState,
+          ...actions,
+        };
 
-    if (typeof advancedCss === 'string') {
-      // If it's a CSS string, use template literal directly
-      cssMultiple = css`
-        ${advancedCss}
-      `;
-    } else if (advancedCss && typeof advancedCss === 'object') {
-      // If it's a CSS object, convert kebab-case to camelCase and use as object
-      const convertedCssObj = convertCssObjectToCamelCase(advancedCss);
-      cssMultiple = css(convertedCssObj);
-    } else {
-      // Fallback to empty css
-      cssMultiple = css``;
-    }
-
-    staticProps.css = cssMultiple;
-
-    const result = {
-      ...staticProps,
-      ...multiples,
-    };
     if (isDatePicker) {
       if (typeof result.value === 'string') result.value = dayjs(result.value);
       if (typeof result.defaultValue === 'string') result.defaultValue = dayjs(result.defaultValue);
     }
-    // if (isNoChildren && 'children' in result) {
-    //   delete result.children;
-    // }
-    if ('styleMultiple' in result) delete result.styleMultiple;
-    if ('dataProps' in result) delete result.dataProps;
+    if (isNoChildren && 'children' in result) {
+      _.unset(result, 'children');
+    }
+    if ('styleMultiple' in result) _.unset(result, 'styleMultiple');
+    if ('dataProps' in result) _.unset(result, 'dataProps');
 
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, getData, dataState, valueStream, multiples, handleAction]);
-  console.log(`🚀 ~ propsCpn ~ ${data.id}:`, propsCpn);
+  }, [data, dataState, valueStream]);
 
   return {
     isLoading,
     valueType,
     Component,
-    propsCpn,
+    propsCpn: cleanProps(convertToPlainProps(propsCpn, getData), valueType),
     findVariable,
     dataState,
-    getData,
   };
 };
 
@@ -107,23 +115,41 @@ const ComponentRenderer: FC<{
   propsCpn: any;
   data: GridItem;
   children?: React.ReactNode;
-}> = ({ Component, propsCpn, data, children }) => (
-  <Component {...propsCpn}>{!_.isEmpty(data?.childs) ? children : propsCpn.children}</Component>
-);
+}> = ({ Component, propsCpn, data, children }) => {
+  // console.log('ComponentRenderer', propsCpn?.style);
+  const { style, ...newPropsCpn } = propsCpn
+
+  return (
+    <Component key={data?.id} {...newPropsCpn}>
+      {!_.isEmpty(data?.childs) ? children : propsCpn.children}
+    </Component>
+  );
+};
 
 const RenderSliceItem: FC<TProps> = (props) => {
   const { data, valueStream } = props;
   const { isLoading, valueType, Component, propsCpn, dataState } = useRenderItem(data, valueStream);
-  const { isForm, isNoChildren, isChart, isFeebBack } = getComponentType(data?.value || '');
+  // console.log(`🚀 ~ propsCpn:${data.id}`, propsCpn);
+  const { isForm, isNoChildren, isChart, isMap } = getComponentType(data?.value || '');
   if (!valueType) return <div></div>;
-  if (isLoading) return <LoadingPage />;
+  if (isLoading) return;
   if (isForm) return <RenderForm {...props} />;
-  if (isNoChildren || isChart) return <Component {...propsCpn} />;
 
+  if (isNoChildren || isChart) return <Component key={data?.id} {...propsCpn} />;
+  if (isMap)
+    return (
+      <div style={{ width: propsCpn.width || '100%', height: propsCpn.height || '400px' }}>
+        <Component key={data?.id} {...propsCpn} />
+      </div>
+    );
   return (
     <ComponentRenderer Component={Component} propsCpn={propsCpn} data={data}>
-      {data?.childs?.map((child) => (
-        <RenderSliceItem {...props} data={child} key={String(child.id)} />
+      {data?.childs?.map((child, index) => (
+        <RenderSliceItem
+          {...props}
+          data={child}
+          key={child.id ? String(child.id) : `child-${index}`}
+        />
       ))}
     </ComponentRenderer>
   );
@@ -138,15 +164,16 @@ const RenderForm: FC<TProps> = (props) => {
   });
   const { handleSubmit } = methods;
   const { handleAction } = useActions();
+  const setFormData = actionHookSliceStore((state) => state.setFormData);
   const formKeys = useMemo(() => data?.componentProps?.formKeys, [data?.componentProps?.formKeys]);
 
   const onSubmit = (formData: any) => {
-    console.log('🚀 ~ onSubmit ~ formData:', formData);
-
-    handleAction('onSubmit', data?.actions, formData);
+    setFormData(formData);
+    propsCpn?.onFinish();
   };
+
   if (!valueType) return <div></div>;
-  if (isLoading) return <LoadingPage />;
+  if (isLoading) return <></>;
 
   return (
     <FormProvider {...methods}>
@@ -154,12 +181,17 @@ const RenderForm: FC<TProps> = (props) => {
         Component={Component}
         propsCpn={{
           ...propsCpn,
-          onFinish: () => handleSubmit(onSubmit)()
+          onFinish: () => handleSubmit(onSubmit)(),
         }}
         data={data}
       >
-        {data?.childs?.map((child) => (
-          <RenderFormItem {...props} data={child} key={String(child.id)} formKeys={formKeys} />
+        {data?.childs?.map((child, index) => (
+          <RenderFormItem
+            {...props}
+            data={child}
+            key={`form-child-${child.id}`}
+            formKeys={formKeys}
+          />
         ))}
       </ComponentRenderer>
     </FormProvider>
@@ -169,8 +201,6 @@ const RenderForm: FC<TProps> = (props) => {
 const RenderFormItem: FC<TProps> = (props) => {
   const { data, formKeys, valueStream } = props;
   const { isLoading, valueType, Component, propsCpn, dataState } = useRenderItem(data, valueStream);
-  const { findVariable } = stateManagementStore();
-  // const { getData, dataState } = useHandleData({ dataProp: data?.data });
   const { control } = useFormContext();
   const { isInput } = getComponentType(data?.value || '');
 
@@ -190,15 +220,15 @@ const RenderFormItem: FC<TProps> = (props) => {
     }
     return <Component {...propsCpn} />;
   }
-
+  if (!valueType) return <div></div>;
+  if (isLoading) return;
   return (
     <ComponentRenderer Component={Component} propsCpn={propsCpn} data={data}>
       {data?.childs?.map((child) => (
-        <RenderFormItem {...props} data={child} key={String(child.id)} />
+        <RenderFormItem {...props} data={child} key={`form-child-${child.id}`} />
       ))}
-      <p className="grow"></p>
     </ComponentRenderer>
   );
 };
 
-export default memo(RenderSliceItem, isEqual);
+export default RenderSliceItem;
